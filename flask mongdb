@@ -1,0 +1,92 @@
+from flask import Flask, request, jsonify
+from pymongo import MongoClient
+from bson import ObjectId
+
+app = Flask(__name__)
+
+connection_string = "mongodb://localhost:27017/"
+mongo = MongoClient(connection_string)
+db = "mydatabase"
+mycollection = "mycollection" 
+
+#creat
+acceptable_keys = {"name", "value","age"}  
+@app.route('/insert', methods=['POST'])
+def insert():
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"msg": "No data provided"}), 400
+        invalid_keys = [key for key in data if key not in acceptable_keys]
+        if invalid_keys:
+            return jsonify({"msg": f"Invalid keys found: {', '.join(invalid_keys)}"}), 400
+        result = mongo[db][mycollection].insert_one(data)
+        return jsonify({"msg": "Data created successfully", "id": str(result.inserted_id)}), 201
+    except errors.PyMongoError as e:
+        return jsonify({"msg": "Database error occurred", "error": str(e)}), 500
+    except Exception as e:
+        return jsonify({"msg": "An unexpected error occurred", "error": str(e)}), 500
+
+#read
+@app.route('/read', methods=['GET'])
+def read():
+    try:
+        items =  mongo[db][mycollection].find()
+        result_list = []
+        for item in items:
+            item_copy = dict(item)
+            if "_id" in item_copy:
+                item_copy["_id"] = str(item_copy["_id"])  
+            result_list.append(item_copy)
+        return jsonify({"result": result_list}), 200
+    except Exception as e:
+        return jsonify({"msg": str(e)}), 500
+
+#update
+@app.route('/update/<item_id>', methods=['PATCH'])
+def update(item_id):
+    try:
+        print(type(item_id))        
+        data = request.json
+        print(data)
+        if not data:
+            return jsonify({"msg": "No data provided"}), 400
+        existing_document =  mongo[db][mycollection].find_one({'_id': ObjectId(item_id)})
+        
+        if not existing_document:
+            return jsonify({"msg": "Item not found"}), 404
+        invalid_keys = [key for key in data if key not in existing_document]
+        if invalid_keys:
+            return jsonify({"msg": f"Invalid keys: {', '.join(invalid_keys)}"}), 400
+        
+        result = mongo[db][mycollection].update_one(
+            {'_id': ObjectId(item_id)}, {'$set': data}
+        )
+        if result.matched_count == 0:
+            return jsonify({"msg": "Item not found"}), 404
+        return jsonify({"msg": "Data updated successfully"}), 200
+    except Exception as e:
+        return jsonify({"msg": "An unexpected error occurred", "error": str(e)}), 500
+
+#delete 
+@app.route('/delete/<item_id>', methods=['DELETE'])
+def delete(item_id):
+    try:
+        try:
+            item_id = ObjectId(item_id)
+        except Exception as e:
+            return jsonify({"msg": "Invalid ID format"}), 400
+        result = mongo[db][mycollection].delete_one({"_id": item_id})
+        if result.deleted_count > 0:
+            return jsonify({"msg": "Data deleted successfully"}), 200
+        else:
+            return jsonify({"msg": "Item not found"}), 404
+    except Exception as e:
+        return jsonify({"msg": "An unexpected error occurred", "error": str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(debug=True)
+
+@app.route('/')
+def home():
+    return "Welcome to the Flask MongoDB CRUD app!"
