@@ -1,3 +1,4 @@
+#flask pydantic mongodb
 from flask import Flask, request, jsonify
 from pymongo import MongoClient, errors
 from bson import ObjectId
