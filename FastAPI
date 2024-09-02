@@ -1,0 +1,114 @@
+from fastapi import FastAPI, HTTPException, Request, Query
+from pydantic import BaseModel, ValidationError, Field
+from pymongo import MongoClient, errors
+from bson import ObjectId
+from typing import Optional, List, Dict
+
+app = FastAPI()
+
+# MongoDB setup
+connection_string = "mongodb://localhost:27017/"
+mongo = MongoClient(connection_string)
+db = "mydatabase"
+mycollection = "mycollection"
+
+# Define Pydantic model
+class ItemModel(BaseModel):
+    name: str
+    value: str
+    age: Optional[int] = Field(ge=0, le=100) 
+
+acceptable_keys = {"name", "value", "age"}
+
+# Create 
+@app.post("/insert")
+async def insert(request: Request):
+    try:
+        data = await request.json()
+        if not data:
+            raise HTTPException(status_code=400, detail="No data provided")
+
+        unexpected_keys = [key for key in data.keys() if key not in acceptable_keys]
+        if unexpected_keys:
+            raise HTTPException(status_code=400, detail=f"Unexpected keys found: {', '.join(unexpected_keys)}. Please check your input.")
+
+        try:
+            item = ItemModel(**data)
+        except ValidationError as e:
+            raise HTTPException(status_code=400, detail={"msg": "Validation error", "errors": e.errors()})
+
+        result = mongo[db][mycollection].insert_one(item.dict())
+        return {"msg": "Data created successfully", "id": str(result.inserted_id)}
+
+    except errors.PyMongoError as e:
+        raise HTTPException(status_code=500, detail={"msg": "Database error occurred", "error": str(e)})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"msg": "An unexpected error occurred", "error": str(e)})
+#read
+@app.get("/read")
+async def read_items(
+    name: Optional[str] = None, 
+    value: Optional[str] = None, 
+    age: Optional[int] = None
+) -> List[Dict]:
+    try:
+        query = {}
+        if name:
+            query["name"] = name
+        if value:
+            query["value"] = value
+        if age is not None:
+            query["age"] = age
+
+        items = list(mongo[db][mycollection].find(query))
+        for item in items:
+            item["_id"] = str(item["_id"])  # Convert ObjectId to string for JSON serialization
+
+        return items
+
+    except errors.PyMongoError as e:
+        raise HTTPException(status_code=500, detail={"msg": "Database error occurred", "error": str(e)})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"msg": "An unexpected error occurred", "error": str(e)})
+
+# Update 
+@app.patch("/update/{item_id}")
+async def update_item(item_id: str, request: Request):
+    try:
+        object_id = ObjectId(item_id)
+        data = await request.json()
+
+        # Check for unexpected keys
+        unexpected_keys = [key for key in data.keys() if key not in acceptable_keys]
+        if unexpected_keys:
+            raise HTTPException(status_code=400, detail=f"Unexpected keys found: {', '.join(unexpected_keys)}. Please check your input.")
+
+        if not data:
+            raise HTTPException(status_code=400, detail="No data provided for update")
+
+        update_result = mongo[db][mycollection].update_one(
+            {"_id": object_id},
+            {"$set": data}
+        )
+        if update_result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Item not found")
+        return {"msg": "Item updated successfully"}
+
+    except errors.PyMongoError as e:
+        raise HTTPException(status_code=500, detail={"msg": "Database error occurred", "error": str(e)})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"msg": "An unexpected error occurred", "error": str(e)})
+# Delete 
+@app.delete("/delete/{item_id}")
+async def delete_item(item_id: str):
+    try:
+        object_id = ObjectId(item_id)
+        delete_result = mongo[db][mycollection].delete_one({"_id": object_id})
+        if delete_result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Item not found")
+        return {"msg": "Item deleted successfully"}
+
+    except errors.PyMongoError as e:
+        raise HTTPException(status_code=500, detail={"msg": "Database error occurred", "error": str(e)})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"msg": "An unexpected error occurred", "error": str(e)})
